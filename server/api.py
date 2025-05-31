@@ -174,6 +174,10 @@ def search_chromadb(user_query: str, collection, top_k=5):
 
 # Cell 8: The main agent function combining classification, search, and fallback
 
+# Cell 8: The main agent function combining classification, search, and fallback
+
+# Cell 8: The main agent function combining classification, search, and fallback
+
 def movie_agent(user_query: str):
     print(f"Received user query: {user_query}")
 
@@ -187,16 +191,70 @@ def movie_agent(user_query: str):
         results = search_chromadb(user_query, collection)
         if results:
             print("Found recommendations in ChromaDB.")
-            return {
-                "source": "ChromaDB",
-                "recommendations": results
-            }
+            # Combine top relevant documents into a context string
+            context_text = "\n\n".join(results)
+
+            # Prepare system and user prompt for final LLM synthesis
+            system_prompt = "You are a helpful movie expert who provides concise summaries based on given context."
+            user_prompt = f"""Answer the following question using the context below.
+
+Question: {user_query}
+
+Context:
+{context_text}
+"""
+
+            # Call OpenRouter LLM to generate final answer
+            try:
+                response = open_router_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_tokens=300,
+                    temperature=0
+                )
+                answer = response.choices[0].message.content.strip()
+
+                # Check if answer indicates insufficient info -> fallback to internet
+                fallback_phrases = [
+                    "does not include information",
+                    "no relevant info",
+                    "not found",
+                    "no data",
+                    "no information",
+                    "no relevant documents",
+                    "sorry, i can't help",
+                ]
+                if any(phrase in answer.lower() for phrase in fallback_phrases):
+                    print("LLM answer indicates no relevant info, falling back to internet search.")
+                    fallback = get_internet_content(user_query)
+                    return {
+                        "source": "ARES",
+                        "answer": fallback
+                    }
+
+                return {
+                    "source": "ChromaDB + LLM",
+                    "answer": answer
+                }
+
+            except Exception as e:
+                print(f"Error in LLM synthesis: {e}")
+                # Fallback to returning raw docs if LLM fails
+                return {
+                    "source": "ChromaDB",
+                    "recommendations": results,
+                    "warning": "Failed to generate final summary; returning raw results."
+                }
+
         else:
             print("No good matches found locally. Falling back to ARES.")
             fallback = get_internet_content(user_query)
             return {
                 "source": "ARES",
-                "recommendations": fallback
+                "answer": fallback
             }
 
     elif action == "INTERNET_QUERY":
@@ -204,15 +262,18 @@ def movie_agent(user_query: str):
         fallback = get_internet_content(user_query)
         return {
             "source": "ARES",
-            "recommendations": fallback
+            "answer": fallback
         }
 
     else:
         print("Generic chat detected, no movie recommendations.")
         return {
             "source": "Agent",
-            "recommendations": "Sorry, I can only help with movie/series queries!"
+            "answer": "Sorry, I can only help with movie/series queries!"
         }
+
+
+
 
 def format_response(response, classification_action):
     if classification_action == "MOVIE_QUERY":
